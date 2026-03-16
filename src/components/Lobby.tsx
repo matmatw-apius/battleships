@@ -15,10 +15,8 @@ function getOrCreatePlayerId(): string {
   return id
 }
 
-// Pierwsze 8 znaków UUID jako czytelny kod pokoju
-function toRoomCode(gameId: string): string {
-  return gameId.replace(/-/g, '').substring(0, 8).toUpperCase()
-}
+// Typ wiersza games zwracany przez Supabase
+type GameRow = { id: string; player1_id: string; room_code: string; status: string }
 
 type LobbyView = 'menu' | 'waiting'
 
@@ -29,7 +27,8 @@ type LobbyProps = {
 export default function Lobby({ onGameReady }: LobbyProps) {
   const [username, setUsername] = useState(() => sessionStorage.getItem(KEY_USERNAME) ?? '')
   const [view, setView]         = useState<LobbyView>('menu')
-  const [gameId, setGameId]     = useState('')
+  const [gameId, setGameId]         = useState('')
+  const [roomCode, setRoomCode]     = useState('')
   const [joinCode, setJoinCode] = useState('')
   const [error, setError]       = useState<string | null>(null)
   const [loading, setLoading]   = useState(false)
@@ -58,23 +57,24 @@ export default function Lobby({ onGameReady }: LobbyProps) {
     setLoading(false)
     if (err || !data) { setError('Nie udało się utworzyć gry – spróbuj ponownie'); return }
 
-    setGameId(data.id)
+    const row = data as GameRow
+    setGameId(row.id)
+    setRoomCode(row.room_code)
     setView('waiting')
   }
 
-  // Dołączanie do gry po 8-znakowym kodzie pokoju
+  // Dołączanie do gry po 6-znakowym kodzie pokoju
   async function handleJoinGame() {
     if (!username.trim()) { setError('Wpisz pseudonim przed dołączeniem'); return }
-    if (joinCode.trim().length < 6) { setError('Wpisz kod pokoju'); return }
+    if (joinCode.trim().length < 6) { setError('Wpisz kod pokoju (6 znaków)'); return }
     setError(null)
     setLoading(true)
 
-    // Szukamy gry po prefiksie UUID (bez myślników)
-    const prefix = joinCode.trim().toLowerCase().replace(/[^a-f0-9]/g, '')
+    // Szukamy gry po kolumnie room_code (dokładne dopasowanie, case-insensitive)
     const { data: found, error: findErr } = await supabase
       .from('games')
       .select()
-      .ilike('id', `${prefix}%`)
+      .ilike('room_code', joinCode.trim())
       .eq('status', 'waiting')
       .limit(1)
 
@@ -84,7 +84,7 @@ export default function Lobby({ onGameReady }: LobbyProps) {
       return
     }
 
-    const game = found[0]
+    const game = found[0] as GameRow
 
     if (game.player1_id === playerId) {
       setLoading(false)
@@ -131,7 +131,7 @@ export default function Lobby({ onGameReady }: LobbyProps) {
 
   // Kopiowanie kodu pokoju do schowka
   async function handleCopy() {
-    await navigator.clipboard.writeText(toRoomCode(gameId))
+    await navigator.clipboard.writeText(roomCode)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
@@ -270,7 +270,7 @@ export default function Lobby({ onGameReady }: LobbyProps) {
               >
                 <p className="text-xs text-cyan-600 uppercase tracking-widest mb-1">Kod pokoju</p>
                 <p className="text-3xl font-black text-cyan-300 tracking-[0.2em] font-mono">
-                  {toRoomCode(gameId)}
+                  {roomCode}
                 </p>
               </div>
 
@@ -298,7 +298,7 @@ export default function Lobby({ onGameReady }: LobbyProps) {
             </div>
 
             <button
-              onClick={() => { setView('menu'); setGameId(''); setError(null) }}
+              onClick={() => { setView('menu'); setGameId(''); setRoomCode(''); setError(null) }}
               className="text-slate-600 text-xs hover:text-slate-400 transition-colors text-center"
             >
               ← Wróć do menu
