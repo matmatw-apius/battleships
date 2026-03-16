@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 
 // Typy stanu pojedynczego pola planszy
 export type CellState = 'empty' | 'ship' | 'hit' | 'miss'
@@ -10,16 +10,24 @@ export type Cell = {
   state: CellState
 }
 
+type PreviewCell = { row: number; col: number }
+
 type BoardProps = {
   cells: Cell[][]
   onCellClick: (row: number, col: number) => void
+  onCellHover?: (row: number, col: number) => void
+  onBoardLeave?: () => void
+  previewCells?: PreviewCell[]
+  previewValid?: boolean
 }
 
 // Litery oznaczające wiersze (A–J)
 const ROW_LABELS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J']
 
 // Klasy Tailwind dla każdego stanu pola
-function getCellClass(state: CellState): string {
+function getCellClass(state: CellState, isPreview: boolean): string {
+  // Podgląd statku nadpisuje normalny kolor pola
+  if (isPreview) return ''
   switch (state) {
     case 'empty': return 'bg-pink-300 hover:bg-pink-400'
     case 'ship':  return 'bg-gray-400 hover:bg-gray-500'
@@ -28,11 +36,24 @@ function getCellClass(state: CellState): string {
   }
 }
 
-export default function Board({ cells, onCellClick }: BoardProps) {
+export default function Board({
+  cells,
+  onCellClick,
+  onCellHover,
+  onBoardLeave,
+  previewCells,
+  previewValid,
+}: BoardProps) {
   // Zbiór kluczy pól z aktywną animacją wciśnięcia
   const [pressedCells, setPressedCells] = useState<Set<string>>(new Set())
   // Zbiór kluczy pól z aktywną animacją wybuchu (trafienie)
   const [explodingCells, setExplodingCells] = useState<Set<string>>(new Set())
+
+  // Przeliczenie podglądu na Set dla wydajności
+  const previewSet = useMemo(
+    () => new Set(previewCells?.map((p) => `${p.row}-${p.col}`) ?? []),
+    [previewCells]
+  )
 
   const handleClick = useCallback((row: number, col: number) => {
     const key = `${row}-${col}`
@@ -56,10 +77,12 @@ export default function Board({ cells, onCellClick }: BoardProps) {
   }, [cells, onCellClick])
 
   return (
-    <div className="inline-block select-none">
+    <div
+      className="inline-block select-none"
+      onMouseLeave={onBoardLeave}
+    >
       {/* Nagłówek z numerami kolumn */}
       <div className="flex">
-        {/* Pusty róg nad etykietami wierszy */}
         <div className="w-9 h-9" />
         {Array.from({ length: 10 }, (_, i) => (
           <div
@@ -84,29 +107,40 @@ export default function Board({ cells, onCellClick }: BoardProps) {
             const key = `${cell.row}-${cell.col}`
             const isPressed   = pressedCells.has(key)
             const isExploding = explodingCells.has(key)
+            const isPreview   = previewSet.has(key)
 
             return (
               <button
                 key={cell.col}
                 onClick={() => handleClick(cell.row, cell.col)}
+                onMouseEnter={() => onCellHover?.(cell.row, cell.col)}
                 className={`
                   w-12 h-12 border border-gray-600 cursor-pointer
                   transition-colors duration-100 relative
                   flex items-center justify-center
-                  ${getCellClass(cell.state)}
+                  ${getCellClass(cell.state, isPreview)}
                   ${isPressed ? 'animate-cell-press' : ''}
                 `}
               >
+                {/* Nakładka podglądu statku */}
+                {isPreview && (
+                  <div className={`absolute inset-0 transition-colors ${
+                    previewValid
+                      ? 'bg-cyan-400/60 border border-cyan-300/50'
+                      : 'bg-red-400/60 border border-red-300/50'
+                  }`} />
+                )}
+
                 {/* Krzyżyk dla pudła */}
                 {cell.state === 'miss' && (
-                  <span className="text-gray-400 font-bold text-xl leading-none pointer-events-none">
+                  <span className="text-gray-400 font-bold text-xl leading-none pointer-events-none z-10">
                     ×
                   </span>
                 )}
 
                 {/* Wybuch przy trafieniu statku */}
                 {isExploding && (
-                  <span className="absolute inset-0 flex items-center justify-center text-2xl pointer-events-none animate-explode z-10">
+                  <span className="absolute inset-0 flex items-center justify-center text-2xl pointer-events-none animate-explode z-20">
                     💥
                   </span>
                 )}
