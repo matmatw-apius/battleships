@@ -1,6 +1,7 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import Board from './components/Board'
 import ShipPanel from './components/ShipPanel'
+import Lobby from './components/Lobby'
 import type { Cell, CellState } from './components/Board'
 import { INITIAL_FLEET } from './components/ShipPanel'
 import type { ShipType } from './components/ShipPanel'
@@ -43,16 +44,26 @@ function isPlacementValid(
 }
 
 // Fazy gry
-type GamePhase = 'placement' | 'ready'
+type GamePhase = 'lobby' | 'placement' | 'ready'
+
+// Kontekst aktywnej rozgrywki
+type GameContext = {
+  gameId: string
+  playerId: string
+  username: string
+}
 
 export default function App() {
+  const [gamePhase, setGamePhase]   = useState<GamePhase>('lobby')
+  const [gameCtx, setGameCtx]       = useState<GameContext | null>(null)
+  const [gamesCount, setGamesCount] = useState<number | null>(null)
+
+  // Stan planszy i floty
   const [cells, setCells]               = useState<Cell[][]>(createEmptyBoard)
   const [fleet, setFleet]               = useState<ShipType[]>(INITIAL_FLEET)
   const [selectedShipId, setSelectedShipId] = useState<string | null>('carrier')
   const [orientation, setOrientation]   = useState<'h' | 'v'>('h')
   const [hoverCell, setHoverCell]       = useState<{ row: number; col: number } | null>(null)
-  const [gamePhase, setGamePhase]       = useState<GamePhase>('placement')
-  const [gamesCount, setGamesCount]     = useState<number | null>(null)
 
   // Test połączenia z Supabase – pobierz liczbę rekordów z tabeli games
   useEffect(() => {
@@ -65,13 +76,19 @@ export default function App() {
       })
   }, [])
 
-  // Aktualnie wybrany statek (tylko jeśli nie w pełni postawiony)
+  // Callback z Lobby – obaj gracze przechodzą do ustawiania statków
+  const handleGameReady = useCallback((gameId: string, playerId: string, username: string) => {
+    setGameCtx({ gameId, playerId, username })
+    setGamePhase('placement')
+  }, [])
+
+  // --- Logika ustawiania statków ---
+
   const selectedShip = useMemo(
     () => fleet.find((s) => s.id === selectedShipId && s.placed < s.count) ?? null,
     [fleet, selectedShipId]
   )
 
-  // Pola podglądu statku pod kursorem
   const previewCells = useMemo(
     () => selectedShip && hoverCell
       ? computePreviewCells(hoverCell, selectedShip.size, orientation)
@@ -79,66 +96,48 @@ export default function App() {
     [selectedShip, hoverCell, orientation]
   )
 
-  // Czy podgląd jest w poprawnym miejscu
   const previewValid = useMemo(
     () => previewCells.length > 0 && isPlacementValid(previewCells, cells),
     [previewCells, cells]
   )
 
-  // Powód, dla którego nie można postawić statku w danym miejscu
   const placementError = useMemo(() => {
     if (!selectedShip || !hoverCell || previewCells.length === 0 || previewValid) return null
-
-    const outOfBounds = previewCells.some(
-      ({ row, col }) => row < 0 || row >= 10 || col < 0 || col >= 10
-    )
+    const outOfBounds = previewCells.some(({ row, col }) => row < 0 || row >= 10 || col < 0 || col >= 10)
     if (outOfBounds) return 'Statek wykracza poza planszę'
-
     const overlaps = previewCells.some(
-      ({ row, col }) =>
-        row >= 0 && row < 10 && col >= 0 && col < 10 &&
-        cells[row][col].state !== 'empty'
+      ({ row, col }) => row >= 0 && row < 10 && col >= 0 && col < 10 && cells[row][col].state !== 'empty'
     )
     if (overlaps) return 'Statki nie mogą się nakładać'
-
     return 'Nieprawidłowa pozycja'
   }, [selectedShip, hoverCell, previewValid, previewCells, cells])
 
   // Klawisz R obraca statek
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
-      if (e.key === 'r' || e.key === 'R') {
-        setOrientation((o) => (o === 'h' ? 'v' : 'h'))
-      }
+      if (e.key === 'r' || e.key === 'R') setOrientation((o) => (o === 'h' ? 'v' : 'h'))
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
   }, [])
 
-  // Obsługa kliknięcia w pole planszy – rozmieszczanie statku
   function handleCellClick(row: number, col: number) {
     if (!selectedShip) return
     const cells_ = computePreviewCells({ row, col }, selectedShip.size, orientation)
     if (!isPlacementValid(cells_, cells)) return
 
-    // Umieść statek na planszy
     setCells((prev) => {
       const next = prev.map((r) => r.map((c) => ({ ...c })))
-      cells_.forEach(({ row: r, col: c }) => {
-        next[r][c].state = 'ship'
-      })
+      cells_.forEach(({ row: r, col: c }) => { next[r][c].state = 'ship' })
       return next
     })
 
-    // Zaktualizuj licznik floty
     setFleet((prev) =>
-      prev.map((s) =>
-        s.id === selectedShip.id ? { ...s, placed: s.placed + 1 } : s
-      )
+      prev.map((s) => s.id === selectedShip.id ? { ...s, placed: s.placed + 1 } : s)
     )
   }
 
-  // Auto-wybór kolejnego niepostawionego statku po umieszczeniu
+  // Auto-wybór kolejnego niepostawionego statku
   useEffect(() => {
     const current = fleet.find((s) => s.id === selectedShipId)
     if (current && current.placed >= current.count) {
@@ -147,15 +146,22 @@ export default function App() {
     }
   }, [fleet, selectedShipId])
 
+  // --- Renderowanie ---
+
+  // Ekran Lobby – przed wejściem do gry
+  if (gamePhase === 'lobby') {
+    return <Lobby onGameReady={handleGameReady} />
+  }
+
+  // Ekran gry – ustawianie statków i oczekiwanie
   return (
     <div
       className="min-h-screen flex flex-col items-center justify-center gap-8 relative overflow-hidden"
-      style={{
-        background: 'radial-gradient(ellipse at 50% 40%, #0d2244 0%, #060e22 55%, #020810 100%)',
-      }}
+      style={{ background: 'radial-gradient(ellipse at 50% 40%, #0d2244 0%, #060e22 55%, #020810 100%)' }}
     >
       {/* Badge połączenia z Supabase */}
-      <div className="absolute top-4 right-4 z-20 flex items-center gap-2 px-3 py-1.5 rounded-full text-xs"
+      <div
+        className="absolute top-4 right-4 z-20 flex items-center gap-2 px-3 py-1.5 rounded-full text-xs"
         style={{ background: 'rgba(6,20,45,0.85)', border: '1px solid rgba(56,189,248,0.2)' }}
       >
         <span className={`w-2 h-2 rounded-full ${gamesCount !== null ? 'bg-green-400' : 'bg-yellow-400 animate-pulse'}`} />
@@ -163,6 +169,17 @@ export default function App() {
           {gamesCount === null ? 'Łączenie…' : `Supabase OK · ${gamesCount} gier`}
         </span>
       </div>
+
+      {/* Nick gracza w lewym górnym rogu */}
+      {gameCtx && (
+        <div
+          className="absolute top-4 left-4 z-20 flex items-center gap-2 px-3 py-1.5 rounded-full text-xs"
+          style={{ background: 'rgba(6,20,45,0.85)', border: '1px solid rgba(56,189,248,0.2)' }}
+        >
+          <span className="text-cyan-400">⚓</span>
+          <span className="text-slate-300 font-medium">{gameCtx.username}</span>
+        </div>
+      )}
 
       {/* Tło – animowane kółka sonaru */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -173,13 +190,9 @@ export default function App() {
 
       {/* Sekcja tytułowa */}
       <div className="relative z-10 flex flex-col items-center gap-2">
-        <p className="text-cyan-500 text-sm font-semibold tracking-[0.3em] uppercase">
-          ⚓ Gra morska
-        </p>
+        <p className="text-cyan-500 text-sm font-semibold tracking-[0.3em] uppercase">⚓ Gra morska</p>
         <h1 className="title-glow text-5xl font-black tracking-tight text-white">
-          STATKI
-          <span className="text-cyan-400"> · </span>
-          MULTIPLAYER
+          STATKI<span className="text-cyan-400"> · </span>MULTIPLAYER
         </h1>
         <p className="text-slate-400 text-sm mt-1 tracking-wide">
           Zatop flotę przeciwnika zanim on zatopi twoją
@@ -188,7 +201,6 @@ export default function App() {
 
       {/* Obszar gry: plansza + panel */}
       <div className="relative z-10 flex gap-5 items-start">
-        {/* Panel z planszą */}
         <div
           className="p-5 rounded-2xl"
           style={{
@@ -207,7 +219,6 @@ export default function App() {
           />
         </div>
 
-        {/* Panel boczny z flotą */}
         <ShipPanel
           fleet={fleet}
           selectedShipId={selectedShipId}
@@ -233,7 +244,6 @@ export default function App() {
             boxShadow: '0 0 40px rgba(56,189,248,0.12)',
           }}
         >
-          {/* Animowana ikona ładowania */}
           <div className="flex gap-1.5">
             {[0, 1, 2].map((i) => (
               <div
@@ -243,9 +253,7 @@ export default function App() {
               />
             ))}
           </div>
-          <p className="text-cyan-300 font-semibold text-sm tracking-wide">
-            Czekam na przeciwnika…
-          </p>
+          <p className="text-cyan-300 font-semibold text-sm tracking-wide">Czekam na przeciwnika…</p>
           <button
             onClick={() => setGamePhase('placement')}
             className="text-slate-500 text-xs hover:text-slate-300 transition-colors underline underline-offset-2"
