@@ -23,9 +23,22 @@ type LobbyView = 'menu' | 'waiting'
 
 type LobbyProps = {
   onGameReady: (gameId: string, playerId: string, username: string) => void
+  onBotGame: () => void
+  onSpectate: (gameId: string) => void
 }
 
-export default function Lobby({ onGameReady }: LobbyProps) {
+// Pobiera gameId po kodzie pokoju (do trybu widza)
+async function getGameIdFromRoomCode(code: string): Promise<string | null> {
+  const { data } = await supabase
+    .from('games')
+    .select('id')
+    .ilike('room_code', code.trim())
+    .limit(1)
+  if (data && data.length > 0) return (data[0] as { id: string }).id
+  return null
+}
+
+export default function Lobby({ onGameReady, onBotGame, onSpectate }: LobbyProps) {
   const [username, setUsername] = useState(() => sessionStorage.getItem(KEY_USERNAME) ?? '')
   const [view, setView]         = useState<LobbyView>('menu')
   const [gameId, setGameId]         = useState('')
@@ -34,6 +47,11 @@ export default function Lobby({ onGameReady }: LobbyProps) {
   const [error, setError]       = useState<string | null>(null)
   const [loading, setLoading]   = useState(false)
   const [copied, setCopied]     = useState(false)
+
+  // Stan dla trybu widza
+  const [spectateCode, setSpectateCode] = useState('')
+  const [spectateLoading, setSpectateLoading] = useState(false)
+  const [spectateError, setSpectateError]     = useState<string | null>(null)
 
   const playerId = getOrCreatePlayerId()
 
@@ -116,6 +134,23 @@ export default function Lobby({ onGameReady }: LobbyProps) {
     if (updateErr) { setError('Nie udało się dołączyć do gry'); return }
 
     onGameReady(game.id, playerId, username.trim())
+  }
+
+  // Obsługa trybu widza – pobierz gameId po kodzie pokoju
+  async function handleSpectate() {
+    if (!spectateCode.trim()) { setSpectateError('Wpisz kod pokoju'); return }
+    setSpectateLoading(true)
+    setSpectateError(null)
+
+    const gId = await getGameIdFromRoomCode(spectateCode)
+    setSpectateLoading(false)
+
+    if (!gId) {
+      setSpectateError('Nie znaleziono gry o tym kodzie')
+      return
+    }
+
+    onSpectate(gId)
   }
 
   // Subskrypcja Realtime – creator czeka aż player2 dołączy
@@ -261,6 +296,61 @@ export default function Lobby({ onGameReady }: LobbyProps) {
                 <p className="text-red-300 text-xs leading-snug">{error}</p>
               </div>
             )}
+
+            {/* Separator dodatkowych trybów */}
+            <div className="flex items-center gap-3">
+              <div className="flex-1 h-px bg-slate-800" />
+              <span className="text-slate-600 text-xs">inne tryby</span>
+              <div className="flex-1 h-px bg-slate-800" />
+            </div>
+
+            {/* Przycisk gry vs Bot */}
+            <button
+              onClick={onBotGame}
+              className="w-full py-2.5 rounded-xl text-sm font-semibold text-slate-300
+                border border-slate-700/50 hover:border-slate-500/50 hover:bg-white/5
+                transition-all duration-150 active:scale-95"
+            >
+              🤖 Zagraj vs Bot
+            </button>
+
+            {/* Sekcja trybu widza */}
+            <div className="flex flex-col gap-2">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={spectateCode}
+                  onChange={(e) => setSpectateCode(e.target.value.toUpperCase())}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSpectate()}
+                  placeholder="Kod pokoju…"
+                  maxLength={12}
+                  className="flex-1 px-4 py-2.5 rounded-xl text-white placeholder-slate-600
+                    text-sm font-mono font-medium outline-none transition-all tracking-widest"
+                  style={{
+                    background: 'rgba(255,255,255,0.05)',
+                    border: '1px solid rgba(168,85,247,0.2)',
+                  }}
+                  onFocus={e => (e.target.style.borderColor = 'rgba(168,85,247,0.5)')}
+                  onBlur={e  => (e.target.style.borderColor = 'rgba(168,85,247,0.2)')}
+                />
+                <button
+                  onClick={handleSpectate}
+                  disabled={spectateLoading}
+                  className="px-4 py-2.5 rounded-xl text-sm font-bold whitespace-nowrap
+                    transition-all duration-150 disabled:opacity-50"
+                  style={{
+                    color: '#c084fc',
+                    border: '1px solid rgba(168,85,247,0.3)',
+                    background: 'rgba(88,28,135,0.2)',
+                  }}
+                >
+                  {spectateLoading ? '…' : '👁️ Oglądaj'}
+                </button>
+              </div>
+              {spectateError && (
+                <p className="text-red-300 text-xs">{spectateError}</p>
+              )}
+            </div>
           </>
         )}
 

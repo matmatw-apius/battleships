@@ -3,6 +3,8 @@ import Board from './components/Board'
 import ShipPanel from './components/ShipPanel'
 import Lobby from './components/Lobby'
 import GameScreen from './components/GameScreen'
+import BotGame from './components/BotGame'
+import SpectatorGame from './components/SpectatorGame'
 import type { Cell, CellState } from './components/Board'
 import { INITIAL_FLEET } from './components/ShipPanel'
 import type { ShipType } from './components/ShipPanel'
@@ -51,7 +53,9 @@ function isPlacementValid(previewCells: { row: number; col: number }[], board: C
 
 // ─── Typy ────────────────────────────────────────────────────────────────────
 
-type GamePhase = 'lobby' | 'placement' | 'waiting' | 'battle'
+type GamePhase = 'lobby' | 'placement' | 'waiting' | 'battle' | 'spectate'
+type GameMode  = 'online' | 'bot'
+type SkinType  = 'ocean' | 'arctic' | 'lava'
 
 type GameContext = {
   gameId: string
@@ -63,8 +67,12 @@ type GameContext = {
 
 export default function App() {
   const [gamePhase, setGamePhase]   = useState<GamePhase>('lobby')
+  const [gameMode, setGameMode]     = useState<GameMode>('online')
   const [gameCtx, setGameCtx]       = useState<GameContext | null>(null)
   const [gamesCount, setGamesCount] = useState<number | null>(null)
+  const [skin, setSkin]             = useState<SkinType>('ocean')
+  // ID gry do trybu widza
+  const [spectateGameId, setSpectateGameId] = useState<string>('')
 
   // Stan planszy i floty
   const [cells, setCells]               = useState<Cell[][]>(createEmptyBoard)
@@ -88,19 +96,38 @@ export default function App() {
   // Callback z Lobby – gra gotowa, przechodzimy do ustawiania statków
   const handleGameReady = useCallback((gameId: string, playerId: string, username: string) => {
     setGameCtx({ gameId, playerId, username })
+    setGameMode('online')
     setGamePhase('placement')
+  }, [])
+
+  // Callback z Lobby – tryb gry vs Bot
+  const handleBotGame = useCallback(() => {
+    // Dla bota potrzebujemy tymczasowego gameCtx z playerId z sessionStorage
+    const playerId = sessionStorage.getItem('bs_player_id') ?? crypto.randomUUID()
+    const username = sessionStorage.getItem('bs_username') ?? 'Gracz'
+    setGameCtx({ gameId: 'bot', playerId, username })
+    setGameMode('bot')
+    setGamePhase('placement')
+  }, [])
+
+  // Callback z Lobby – tryb widza
+  const handleSpectate = useCallback((gId: string) => {
+    setSpectateGameId(gId)
+    setGamePhase('spectate')
   }, [])
 
   // Powrót do lobby – reset całego stanu gry
   const handleReturnToLobby = useCallback(() => {
     setGamePhase('lobby')
     setGameCtx(null)
+    setGameMode('online')
     setCells(createEmptyBoard())
     setFleet(INITIAL_FLEET)
     setPlacedShipDetails([])
     setSelectedShipId('carrier')
     setOrientation('h')
     setHoverCell(null)
+    setSpectateGameId('')
   }, [])
 
   // Regrywka z tym samym przeciwnikiem – reset planszy, nowe gameId, wróć do placement
@@ -182,6 +209,13 @@ export default function App() {
 
   async function handleReady() {
     if (!gameCtx) return
+
+    // Tryb bot – pomiń Supabase i od razu przejdź do bitwy
+    if (gameMode === 'bot') {
+      setGamePhase('battle')
+      return
+    }
+
     setGamePhase('waiting')
 
     // Zapisz planszę z rozstawionymi statkami do Supabase
@@ -227,8 +261,37 @@ export default function App() {
 
   // ─── Renderowanie ─────────────────────────────────────────────────────────
 
-  if (gamePhase === 'lobby') return <Lobby onGameReady={handleGameReady} />
+  if (gamePhase === 'lobby') return (
+    <Lobby
+      onGameReady={handleGameReady}
+      onBotGame={handleBotGame}
+      onSpectate={handleSpectate}
+    />
+  )
 
+  // Tryb widza
+  if (gamePhase === 'spectate') {
+    return (
+      <SpectatorGame
+        gameId={spectateGameId}
+        onReturnToLobby={handleReturnToLobby}
+      />
+    )
+  }
+
+  // Bitwa vs Bot
+  if (gamePhase === 'battle' && gameMode === 'bot' && gameCtx) {
+    return (
+      <BotGame
+        myShips={placedShipDetails}
+        myUsername={gameCtx.username}
+        skin={skin}
+        onReturnToLobby={handleReturnToLobby}
+      />
+    )
+  }
+
+  // Bitwa online
   if (gamePhase === 'battle' && gameCtx) {
     return (
       <GameScreen
@@ -302,17 +365,67 @@ export default function App() {
                 onBoardLeave={() => setHoverCell(null)}
                 previewCells={previewCells}
                 previewValid={previewValid}
+                skin={skin}
               />
             </div>
-            <ShipPanel
-              fleet={fleet}
-              selectedShipId={selectedShipId}
-              orientation={orientation}
-              placementError={placementError}
-              onSelectShip={setSelectedShipId}
-              onRotate={() => setOrientation(o => o === 'h' ? 'v' : 'h')}
-              onReady={handleReady}
-            />
+
+            {/* Panel statków + wybór skórki */}
+            <div className="flex flex-col gap-3">
+              <ShipPanel
+                fleet={fleet}
+                selectedShipId={selectedShipId}
+                orientation={orientation}
+                placementError={placementError}
+                onSelectShip={setSelectedShipId}
+                onRotate={() => setOrientation(o => o === 'h' ? 'v' : 'h')}
+                onReady={handleReady}
+              />
+
+              {/* Wybór skórki planszy */}
+              <div
+                className="flex flex-col gap-2 p-4 rounded-2xl"
+                style={{
+                  background: 'rgba(6,20,45,0.85)',
+                  border: '1px solid rgba(56,189,248,0.2)',
+                }}
+              >
+                <p className="text-xs font-semibold text-cyan-500 tracking-widest uppercase">
+                  🎨 Skórka planszy
+                </p>
+                <div className="flex gap-3 items-center justify-center">
+                  {/* Ocean */}
+                  <button
+                    onClick={() => setSkin('ocean')}
+                    title="Ocean"
+                    className={`w-8 h-8 rounded-full transition-all ${
+                      skin === 'ocean' ? 'scale-110 ring-2 ring-cyan-400 ring-offset-1 ring-offset-slate-900' : 'hover:scale-105'
+                    }`}
+                    style={{ background: '#1e3a5f', border: '1px solid rgba(56,189,248,0.5)' }}
+                  />
+                  {/* Arctic */}
+                  <button
+                    onClick={() => setSkin('arctic')}
+                    title="Arktyka"
+                    className={`w-8 h-8 rounded-full transition-all ${
+                      skin === 'arctic' ? 'scale-110 ring-2 ring-sky-300 ring-offset-1 ring-offset-slate-900' : 'hover:scale-105'
+                    }`}
+                    style={{ background: '#bae6fd' }}
+                  />
+                  {/* Lava */}
+                  <button
+                    onClick={() => setSkin('lava')}
+                    title="Lawa"
+                    className={`w-8 h-8 rounded-full transition-all ${
+                      skin === 'lava' ? 'scale-110 ring-2 ring-orange-500 ring-offset-1 ring-offset-slate-900' : 'hover:scale-105'
+                    }`}
+                    style={{ background: '#7c2d12' }}
+                  />
+                </div>
+                <p className="text-xs text-slate-500 text-center">
+                  {skin === 'ocean' ? 'Ocean' : skin === 'arctic' ? 'Arktyka' : 'Lawa'}
+                </p>
+              </div>
+            </div>
           </div>
           <p className="relative z-10 text-slate-600 text-xs">
             Kliknij statek w panelu → ustaw na planszy · klawisz R obraca

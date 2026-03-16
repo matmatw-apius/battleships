@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase'
 import type { PlacedShip, ShotRecord, GameRow } from '../types/game'
 import { playShoot, playHit, playMiss, playSunk, playWin, playLose } from '../lib/sounds'
 import ChatPanel from './ChatPanel'
+import HelpModal from './HelpModal'
 
 const TURN_SECONDS = 30
 
@@ -106,6 +107,12 @@ export default function GameScreen({ gameId, myPlayerId, myUsername, myShips, on
   const [timerVersion, setTimerVersion]   = useState(0)
   // Stan przycisku regrywki
   const [rematchState, setRematchState]   = useState<'idle' | 'waiting'>('idle')
+
+  // Power-upy
+  const [radarUsed, setRadarUsed]               = useState(false)
+  const [doubleShotUsed, setDoubleShotUsed]     = useState(false)
+  const [doubleShotActive, setDoubleShotActive] = useState(false)
+  const [doubleShotsLeft, setDoubleShotsLeft]   = useState(2)
 
   // Ref do interwału timera – pozwala anulować go przed strzałem
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -322,6 +329,37 @@ export default function GameScreen({ gameId, myPlayerId, myUsername, myShips, on
     // Zresetuj timer po każdym strzale (hit lub miss)
     setTimerVersion(v => v + 1)
 
+    // Obsługa podwójnego strzału
+    if (doubleShotActive) {
+      const newLeft = doubleShotsLeft - 1
+      setDoubleShotsLeft(newLeft)
+      if (newLeft <= 0 || result === 'miss') {
+        // Podwójny strzał wyczerpany lub pudło – zakończ i przekaż turę
+        setDoubleShotActive(false)
+        setDoubleShotsLeft(2)
+        if (result === 'miss') {
+          await supabase.from('games').update({ current_turn: opponentId }).eq('id', gameId)
+        } else if (newLeft <= 0) {
+          await supabase.from('games').update({ current_turn: opponentId }).eq('id', gameId)
+        }
+      }
+      // Jeśli jeszcze mamy strzały i trafiliśmy – kontynuujemy bez przekazania tury
+      if (result === 'sunk') {
+        // Sprawdź warunek wygranej
+        const hitCellsFinal = new Set([
+          ...allShots.filter(s => s.player_id === myPlayerId && s.result !== 'miss').map(s => `${s.row}-${s.col}`),
+          `${row}-${col}`
+        ])
+        const allSunk = opponentShips.every(ship =>
+          ship.cells.every(c => hitCellsFinal.has(`${c.row}-${c.col}`))
+        )
+        if (allSunk) {
+          await supabase.from('games').update({ status: 'finished', winner_id: myPlayerId }).eq('id', gameId)
+        }
+      }
+      return
+    }
+
     if (result === 'miss') {
       await supabase.from('games').update({ current_turn: opponentId }).eq('id', gameId)
     } else if (result === 'sunk') {
@@ -337,7 +375,44 @@ export default function GameScreen({ gameId, myPlayerId, myUsername, myShips, on
         await supabase.from('games').update({ status: 'finished', winner_id: myPlayerId }).eq('id', gameId)
       }
     }
-  }, [gameId, myPlayerId, opponentId, isMyTurn, gameStatus, allShots, opponentShips])
+  }, [gameId, myPlayerId, opponentId, isMyTurn, gameStatus, allShots, opponentShips, doubleShotActive, doubleShotsLeft])
+
+  // ─── Radar power-up ─────────────────────────────────────────────────────────
+
+  function handleRadar() {
+    if (radarUsed || !isMyTurn) return
+
+    // Znajdź losowe nieodkryte pole na planszy przeciwnika
+    const unrevealed: { row: number; col: number }[] = []
+    for (let r = 0; r < 10; r++) {
+      for (let c = 0; c < 10; c++) {
+        if (!myShots.some(s => s.row === r && s.col === c)) {
+          unrevealed.push({ row: r, col: c })
+        }
+      }
+    }
+    if (unrevealed.length === 0) return
+
+    const target = unrevealed[Math.floor(Math.random() * unrevealed.length)]
+    const colLabel = String.fromCharCode(65 + target.row)
+    const cellLabel = `${colLabel}${target.col + 1}`
+
+    const hasShip = opponentShips.some(ship =>
+      ship.cells.some(c => c.row === target.row && c.col === target.col)
+    )
+    showToast(`🔍 Radar: ${cellLabel} — ${hasShip ? 'Statek!' : 'Woda'}`, 'info')
+    setRadarUsed(true)
+  }
+
+  // ─── Podwójny strzał power-up ────────────────────────────────────────────
+
+  function handleDoubleShot() {
+    if (doubleShotUsed || !isMyTurn) return
+    setDoubleShotActive(true)
+    setDoubleShotsLeft(2)
+    setDoubleShotUsed(true)
+    showToast('💣 Podwójny strzał aktywny! Masz 2 strzały.', 'success')
+  }
 
   // ─── Regrywka: tworzenie nowej gry z tym samym przeciwnikiem ─────────────
 
@@ -447,6 +522,7 @@ export default function GameScreen({ gameId, myPlayerId, myUsername, myShips, on
             </button>
           </div>
         </div>
+        <HelpModal />
       </div>
     )
   }
@@ -518,6 +594,38 @@ export default function GameScreen({ gameId, myPlayerId, myUsername, myShips, on
         </div>
       </div>
 
+      {/* Power-upy */}
+      <div className="relative z-10 flex gap-3">
+        <button
+          onClick={handleRadar}
+          disabled={radarUsed || !isMyTurn}
+          className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all ${
+            radarUsed
+              ? 'opacity-40 cursor-not-allowed bg-slate-800/40 text-slate-500 border border-slate-700/40'
+              : !isMyTurn
+                ? 'opacity-60 cursor-not-allowed bg-slate-800/60 text-slate-400 border border-slate-700/40'
+                : 'bg-cyan-900/60 text-cyan-300 border border-cyan-700/50 hover:border-cyan-500/60 hover:bg-cyan-900/80 cursor-pointer'
+          }`}
+        >
+          🔍 Radar {radarUsed ? '(użyty)' : ''}
+        </button>
+        <button
+          onClick={handleDoubleShot}
+          disabled={doubleShotUsed || !isMyTurn}
+          className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all ${
+            doubleShotUsed
+              ? 'opacity-40 cursor-not-allowed bg-slate-800/40 text-slate-500 border border-slate-700/40'
+              : !isMyTurn
+                ? 'opacity-60 cursor-not-allowed bg-slate-800/60 text-slate-400 border border-slate-700/40'
+                : doubleShotActive
+                  ? 'bg-orange-900/80 text-orange-300 border border-orange-600/60 cursor-pointer animate-pulse'
+                  : 'bg-orange-900/60 text-orange-300 border border-orange-700/50 hover:border-orange-500/60 hover:bg-orange-900/80 cursor-pointer'
+          }`}
+        >
+          💣 Salwa ×2 {doubleShotActive ? `(${doubleShotsLeft} strzały)` : doubleShotUsed ? '(użyta)' : ''}
+        </button>
+      </div>
+
       {/* Dwie plansze */}
       <div className="relative z-10 flex gap-6 items-start">
 
@@ -562,6 +670,9 @@ export default function GameScreen({ gameId, myPlayerId, myUsername, myShips, on
 
       {/* Czat – pływający widget w prawym dolnym rogu */}
       <ChatPanel gameId={gameId} myPlayerId={myPlayerId} myUsername={myUsername} />
+
+      {/* Modal pomocy */}
+      <HelpModal />
     </div>
   )
 }

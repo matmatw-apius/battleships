@@ -112,3 +112,42 @@
   background: linear-gradient(135deg, #0e7490 0%, #0369a1 60%, #1e3a5f 100%);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), 0 0 12px rgba(56,189,248,0.4), 0 2px 4px rgba(0,0,0,0.4);
 }
+
+/* --- Particles --- */
+@keyframes particle {
+  0%   { transform: translate(0,0) scale(1); opacity: 1; }
+  100% { transform: translate(var(--px), var(--py)) scale(0); opacity: 0; }
+}
+.particle {
+  position: absolute; width: 5px; height: 5px; border-radius: 50%;
+  animation: particle 500ms ease-out forwards; pointer-events: none; z-index: 30;
+  top: 50%; left: 50%;
+}
+
+/* --- Wave grid animation --- */
+@keyframes wave-grid {
+  0%, 100% { opacity: 0.04; }
+  50%       { opacity: 0.09; }
+}
+.board-wave::before {
+  content: '';
+  position: absolute; inset: 0; pointer-events: none;
+  background: repeating-linear-gradient(90deg, rgba(56,189,248,1) 0px, rgba(56,189,248,1) 1px, transparent 1px, transparent 48px),
+              repeating-linear-gradient(0deg, rgba(56,189,248,1) 0px, rgba(56,189,248,1) 1px, transparent 1px, transparent 48px);
+  animation: wave-grid 3s ease-in-out infinite;
+  border-radius: 4px;
+}
+
+/* --- Skin: arctic --- */
+.skin-arctic .cell-empty-own   { background: rgba(186,230,253,0.7) !important; }
+.skin-arctic .cell-empty-enemy { background: rgba(30,58,138,0.5) !important; }
+.skin-arctic .cell-ship   { background: #94a3b8 !important; }
+.skin-arctic .cell-hit    { background: #ef4444 !important; }
+.skin-arctic .cell-miss   { background: #e0f2fe !important; }
+
+/* --- Skin: lava --- */
+.skin-lava .cell-empty-own   { background: rgba(254,215,170,0.7) !important; }
+.skin-lava .cell-empty-enemy { background: rgba(69,26,3,0.6) !important; }
+.skin-lava .cell-ship   { background: #92400e !important; }
+.skin-lava .cell-hit    { background: #dc2626 !important; }
+.skin-lava .cell-miss   { background: #fef3c7 !important; }
