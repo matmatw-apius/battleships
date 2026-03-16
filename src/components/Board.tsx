@@ -19,17 +19,21 @@ type BoardProps = {
   onBoardLeave?: () => void
   previewCells?: PreviewCell[]
   previewValid?: boolean
+  // Tryb planszy przeciwnika – puste pola mają neutralny kolor zamiast różowego
+  isEnemy?: boolean
 }
 
 // Litery oznaczające wiersze (A–J)
 const ROW_LABELS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J']
 
 // Klasy Tailwind dla każdego stanu pola
-function getCellClass(state: CellState, isPreview: boolean): string {
+function getCellClass(state: CellState, isPreview: boolean, isEnemy: boolean): string {
   // Podgląd statku nadpisuje normalny kolor pola
   if (isPreview) return ''
   switch (state) {
-    case 'empty': return 'bg-pink-300 hover:bg-pink-400'
+    case 'empty': return isEnemy
+      ? 'bg-slate-700/60 hover:bg-slate-600/80'
+      : 'bg-pink-300 hover:bg-pink-400'
     case 'ship':  return 'bg-gray-400 hover:bg-gray-500'
     case 'hit':   return 'bg-red-500 hover:bg-red-600'
     case 'miss':  return 'bg-white hover:bg-gray-100'
@@ -43,6 +47,7 @@ export default function Board({
   onBoardLeave,
   previewCells,
   previewValid,
+  isEnemy = false,
 }: BoardProps) {
   // Zbiór kluczy pól z aktywną animacją wciśnięcia
   const [pressedCells, setPressedCells] = useState<Set<string>>(new Set())
@@ -118,7 +123,7 @@ export default function Board({
                   w-12 h-12 border border-gray-600 cursor-pointer
                   transition-colors duration-100 relative
                   flex items-center justify-center
-                  ${getCellClass(cell.state, isPreview)}
+                  ${getCellClass(cell.state, isPreview, isEnemy)}
                   ${isPressed ? 'animate-cell-press' : ''}
                 `}
               >
