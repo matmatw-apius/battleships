@@ -192,6 +192,8 @@ export default function GameScreen({ gameId, myPlayerId, myShips, onReturnToLobb
         (payload) => {
           const shot = payload.new as ShotRecord
           setAllShots(prev => [...prev, shot])
+          // Reset timera u obu graczy po każdym strzale
+          setTimerVersion(v => v + 1)
 
           if (shot.player_id === myPlayerId) {
             // Mój strzał – zaktualizuj planszę przeciwnika (toast pokazany w handleShoot)
