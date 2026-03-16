@@ -21,6 +21,8 @@ type BoardProps = {
   previewValid?: boolean
   // Tryb planszy przeciwnika – puste pola mają neutralny kolor zamiast różowego
   isEnemy?: boolean
+  // Wyłącza klikanie i zmienia kursor na domyślny (np. moja plansza w trybie walki)
+  interactive?: boolean
 }
 
 // Litery oznaczające wiersze (A–J)
@@ -48,6 +50,7 @@ export default function Board({
   previewCells,
   previewValid,
   isEnemy = false,
+  interactive = true,
 }: BoardProps) {
   // Zbiór kluczy pól z aktywną animacją wciśnięcia
   const [pressedCells, setPressedCells] = useState<Set<string>>(new Set())
@@ -117,12 +120,13 @@ export default function Board({
             return (
               <button
                 key={cell.col}
-                onClick={() => handleClick(cell.row, cell.col)}
-                onMouseEnter={() => onCellHover?.(cell.row, cell.col)}
+                onClick={() => interactive && handleClick(cell.row, cell.col)}
+                onMouseEnter={() => interactive && onCellHover?.(cell.row, cell.col)}
                 className={`
-                  w-12 h-12 border border-gray-600 cursor-pointer
+                  w-12 h-12 border border-gray-600
                   transition-colors duration-100 relative
                   flex items-center justify-center
+                  ${interactive ? 'cursor-pointer' : 'cursor-default'}
                   ${getCellClass(cell.state, isPreview, isEnemy)}
                   ${isPressed ? 'animate-cell-press' : ''}
                 `}

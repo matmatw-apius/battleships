@@ -1,8 +1,10 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import Board from './Board'
 import type { Cell, CellState } from './Board'
 import { supabase } from '../lib/supabase'
 import type { PlacedShip, ShotRecord, GameRow } from '../types/game'
+
+const TURN_SECONDS = 30
 
 type GameScreenProps = {
   gameId: string
@@ -18,7 +20,6 @@ function createEmptyBoard(): Cell[][] {
   )
 }
 
-// Buduję moją planszę: moje statki + trafienia przeciwnika
 function buildMyBoard(myShips: PlacedShip[], opponentShots: ShotRecord[]): Cell[][] {
   const board = createEmptyBoard()
   myShips.forEach(ship =>
@@ -30,7 +31,6 @@ function buildMyBoard(myShips: PlacedShip[], opponentShots: ShotRecord[]): Cell[
   return board
 }
 
-// Buduję planszę przeciwnika: tylko moje strzały (bez widocznych statków)
 function buildEnemyBoard(myShots: ShotRecord[]): Cell[][] {
   const board = createEmptyBoard()
   myShots.forEach(shot => {
@@ -39,7 +39,8 @@ function buildEnemyBoard(myShots: ShotRecord[]): Cell[][] {
   return board
 }
 
-// ─── Fleet Tracker: podgląd statków przeciwnika ─────────────────────────────
+// ─── Fleet Tracker: status statków przeciwnika ──────────────────────────────
+// Pokazuje tylko czy statek jest zatopiony – nie zdradza gdzie są nieodkryte statki
 
 function FleetTracker({ opponentShips, myShots }: { opponentShips: PlacedShip[], myShots: ShotRecord[] }) {
   const hitCells = new Set(
@@ -48,36 +49,30 @@ function FleetTracker({ opponentShips, myShots }: { opponentShips: PlacedShip[],
 
   return (
     <div
-      className="flex flex-wrap gap-3 p-4 rounded-2xl"
-      style={{
-        background: 'rgba(6,20,45,0.85)',
-        border: '1px solid rgba(56,189,248,0.2)',
-      }}
+      className="flex flex-wrap gap-4 p-4 rounded-2xl"
+      style={{ background: 'rgba(6,20,45,0.85)', border: '1px solid rgba(56,189,248,0.2)' }}
     >
       <p className="w-full text-xs font-semibold text-cyan-500 tracking-widest uppercase mb-1">
         Flota przeciwnika
       </p>
       {opponentShips.map(ship => {
+        // Statek zatopiony tylko gdy WSZYSTKIE jego pola są trafione
         const isSunk = ship.cells.every(c => hitCells.has(`${c.row}-${c.col}`))
         return (
-          <div
-            key={ship.shipId}
-            className={`flex flex-col gap-1 transition-opacity ${isSunk ? 'opacity-40' : ''}`}
-          >
-            {/* Bloki reprezentujące komórki statku */}
+          <div key={ship.shipId} className="flex flex-col gap-1">
+            {/* Bloki: szare = nieznany status, czerwone = zatopiony */}
             <div className="flex gap-0.5">
-              {ship.cells.map((cell, i) => (
+              {Array.from({ length: ship.size }, (_, i) => (
                 <div
                   key={i}
                   className={`h-3.5 w-5 rounded-sm transition-colors ${
-                    hitCells.has(`${cell.row}-${cell.col}`) ? 'bg-red-500' : 'bg-gray-500'
+                    isSunk ? 'bg-red-500' : 'bg-gray-600'
                   }`}
                 />
               ))}
             </div>
-            {/* Nazwa z ikoną zatopienia */}
-            <span className={`text-xs ${isSunk ? 'text-green-400 line-through' : 'text-slate-400'}`}>
-              {ship.name} {isSunk ? '✓' : ''}
+            <span className={`text-xs ${isSunk ? 'text-red-400 line-through' : 'text-slate-500'}`}>
+              {isSunk ? `${ship.name} ✓` : '???'}
             </span>
           </div>
         )
@@ -91,30 +86,33 @@ function FleetTracker({ opponentShips, myShots }: { opponentShips: PlacedShip[],
 type Toast = { text: string; type: 'info' | 'success' | 'error' }
 
 export default function GameScreen({ gameId, myPlayerId, myShips }: GameScreenProps) {
-  const [myBoard, setMyBoard]           = useState<Cell[][]>(() => buildMyBoard(myShips, []))
-  const [enemyBoard, setEnemyBoard]     = useState<Cell[][]>(createEmptyBoard)
+  const [myBoard, setMyBoard]             = useState<Cell[][]>(() => buildMyBoard(myShips, []))
+  const [enemyBoard, setEnemyBoard]       = useState<Cell[][]>(createEmptyBoard)
   const [opponentShips, setOpponentShips] = useState<PlacedShip[]>([])
-  const [allShots, setAllShots]         = useState<ShotRecord[]>([])
-  const [currentTurn, setCurrentTurn]   = useState('')
-  const [opponentId, setOpponentId]     = useState('')
-  const [gameStatus, setGameStatus]     = useState('battle')
-  const [winnerId, setWinnerId]         = useState<string | null>(null)
-  const [toast, setToast]               = useState<Toast | null>(null)
-  const [loading, setLoading]           = useState(true)
+  const [allShots, setAllShots]           = useState<ShotRecord[]>([])
+  const [currentTurn, setCurrentTurn]     = useState('')
+  const [opponentId, setOpponentId]       = useState('')
+  const [gameStatus, setGameStatus]       = useState('battle')
+  const [winnerId, setWinnerId]           = useState<string | null>(null)
+  const [toast, setToast]                 = useState<Toast | null>(null)
+  const [loading, setLoading]             = useState(true)
+  const [timeLeft, setTimeLeft]           = useState(TURN_SECONDS)
+
+  // Ref do interwału timera – pozwala anulować go przed strzałem
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const isMyTurn = currentTurn === myPlayerId
   const myShots  = allShots.filter(s => s.player_id === myPlayerId)
 
   function showToast(text: string, type: Toast['type'] = 'info') {
     setToast({ text, type })
-    setTimeout(() => setToast(null), 2500)
+    setTimeout(() => setToast(null), 3000)
   }
 
   // ─── Inicjalizacja: ładowanie danych gry ──────────────────────────────────
 
   useEffect(() => {
     async function init() {
-      // Szczegóły gry
       const { data: game } = await supabase
         .from('games').select().eq('id', gameId).single()
       if (!game) return
@@ -126,12 +124,11 @@ export default function GameScreen({ gameId, myPlayerId, myShips }: GameScreenPr
       setGameStatus(g.status)
       setWinnerId(g.winner_id)
 
-      // Statki przeciwnika (potrzebne do wykrywania trafień)
+      // Statki przeciwnika – potrzebne do obliczania trafień i win condition
       const { data: oppBoard } = await supabase
         .from('boards').select('ships').eq('game_id', gameId).eq('player_id', oppId).single()
       if (oppBoard) setOpponentShips(oppBoard.ships as PlacedShip[])
 
-      // Historia strzałów
       const { data: shots } = await supabase
         .from('shots').select().eq('game_id', gameId).order('created_at', { ascending: true })
       if (shots) {
@@ -145,6 +142,31 @@ export default function GameScreen({ gameId, myPlayerId, myShips }: GameScreenPr
     }
     init()
   }, [gameId, myPlayerId, myShips])
+
+  // ─── Timer tury – 30 sekund, reset przy każdej zmianie tury ─────────────
+
+  useEffect(() => {
+    if (gameStatus !== 'battle' || !opponentId) return
+
+    setTimeLeft(TURN_SECONDS)
+    if (timerRef.current) clearInterval(timerRef.current)
+
+    timerRef.current = setInterval(() => {
+      setTimeLeft(prev => {
+        if (prev <= 1) {
+          // Czas minął – jeśli moja tura, automatycznie przekaż ją dalej
+          if (currentTurn === myPlayerId) {
+            supabase.from('games').update({ current_turn: opponentId }).eq('id', gameId)
+            showToast('Czas minął! Tura przeszła do przeciwnika.', 'info')
+          }
+          return TURN_SECONDS
+        }
+        return prev - 1
+      })
+    }, 1000)
+
+    return () => { if (timerRef.current) clearInterval(timerRef.current) }
+  }, [currentTurn, gameStatus, opponentId, gameId, myPlayerId])
 
   // ─── Realtime: nowe strzały ───────────────────────────────────────────────
 
@@ -160,14 +182,12 @@ export default function GameScreen({ gameId, myPlayerId, myShips }: GameScreenPr
           setAllShots(prev => [...prev, shot])
 
           if (shot.player_id === myPlayerId) {
-            // Mój strzał – zaktualizuj planszę przeciwnika
+            // Mój strzał – zaktualizuj planszę przeciwnika (toast pokazany w handleShoot)
             setEnemyBoard(prev => {
               const next = prev.map(r => r.map(c => ({ ...c })))
               next[shot.row][shot.col].state = shot.result === 'miss' ? 'miss' : 'hit'
               return next
             })
-            if (shot.result === 'sunk')      showToast('💥 Zatopiony!', 'success')
-            else if (shot.result === 'hit')  showToast('🎯 Trafiony!', 'success')
           } else {
             // Strzał przeciwnika – zaktualizuj moją planszę
             setMyBoard(prev => {
@@ -175,15 +195,22 @@ export default function GameScreen({ gameId, myPlayerId, myShips }: GameScreenPr
               next[shot.row][shot.col].state = shot.result === 'miss' ? 'miss' : 'hit'
               return next
             })
-            if (shot.result === 'sunk')     showToast('💥 Twój statek zatopiony!', 'error')
-            else if (shot.result === 'hit') showToast('🎯 Trafiony!', 'error')
+            // Powiadomienie z nazwą statku jeśli zatopiony
+            if (shot.result === 'sunk') {
+              const sunkShip = myShips.find(ship =>
+                ship.cells.some(c => c.row === shot.row && c.col === shot.col)
+              )
+              showToast(`💥 Twój ${sunkShip?.name ?? 'statek'} został zatopiony!`, 'error')
+            } else if (shot.result === 'hit') {
+              showToast('🎯 Przeciwnik trafił twój statek!', 'error')
+            }
           }
         }
       )
       .subscribe()
 
     return () => { supabase.removeChannel(channel) }
-  }, [gameId, myPlayerId, opponentId])
+  }, [gameId, myPlayerId, opponentId, myShips])
 
   // ─── Realtime: zmiany w grze (tura, koniec) ──────────────────────────────
 
@@ -210,13 +237,15 @@ export default function GameScreen({ gameId, myPlayerId, myShips }: GameScreenPr
     if (gameStatus !== 'battle') return
     if (!isMyTurn) { showToast('Nie twoja tura!', 'error'); return }
 
-    // Sprawdź czy pole już było strzelane
     const alreadyShot = allShots.some(
       s => s.player_id === myPlayerId && s.row === row && s.col === col
     )
     if (alreadyShot) { showToast('To pole było już strzelane', 'info'); return }
 
-    // Wyznacz wynik strzału
+    // Anuluj timer – strzał wykonany, nie ma potrzeby auto-przekazywać tury
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
+
+    // Wyznacz wynik strzału na podstawie ukrytych statków przeciwnika
     const hitShip = opponentShips.find(ship =>
       ship.cells.some(c => c.row === row && c.col === col)
     )
@@ -224,25 +253,27 @@ export default function GameScreen({ gameId, myPlayerId, myShips }: GameScreenPr
     let result: 'hit' | 'miss' | 'sunk' = 'miss'
     if (hitShip) {
       const hitCells = new Set([
-        ...allShots.filter(s => s.player_id === myPlayerId && s.result !== 'miss')
-          .map(s => `${s.row}-${s.col}`),
+        ...allShots.filter(s => s.player_id === myPlayerId && s.result !== 'miss').map(s => `${s.row}-${s.col}`),
         `${row}-${col}`
       ])
-      const isSunk = hitShip.cells.every(c => hitCells.has(`${c.row}-${c.col}`))
-      result = isSunk ? 'sunk' : 'hit'
+      result = hitShip.cells.every(c => hitCells.has(`${c.row}-${c.col}`)) ? 'sunk' : 'hit'
     }
 
-    // Zapisz strzał w bazie (Realtime propaguje go do obu graczy)
+    // Pokaż feedback od razu (nie czekając na Realtime)
+    if (result === 'sunk') {
+      showToast(`💥 ${hitShip!.name} zatopiony!`, 'success')
+    } else if (result === 'hit') {
+      showToast('🎯 Trafiony! Strzelasz ponownie!', 'success')
+    }
+
     await supabase.from('shots').insert({ game_id: gameId, player_id: myPlayerId, row, col, result })
 
     if (result === 'miss') {
-      // Pudło – zmień turę
       await supabase.from('games').update({ current_turn: opponentId }).eq('id', gameId)
     } else if (result === 'sunk') {
-      // Sprawdź czy wszystkie statki przeciwnika zostały zatopione
+      // Sprawdź warunek wygranej
       const hitCells = new Set([
-        ...allShots.filter(s => s.player_id === myPlayerId && s.result !== 'miss')
-          .map(s => `${s.row}-${s.col}`),
+        ...allShots.filter(s => s.player_id === myPlayerId && s.result !== 'miss').map(s => `${s.row}-${s.col}`),
         `${row}-${col}`
       ])
       const allSunk = opponentShips.every(ship =>
@@ -290,11 +321,14 @@ export default function GameScreen({ gameId, myPlayerId, myShips }: GameScreenPr
     )
   }
 
-  const turnBorderColor = isMyTurn ? 'rgba(56,189,248,0.5)' : 'rgba(100,116,139,0.3)'
+  // Kolor i skala timera
+  const timerPct    = (timeLeft / TURN_SECONDS) * 100
+  const timerColor  = timeLeft > 20 ? '#22d3ee' : timeLeft > 10 ? '#fb923c' : '#ef4444'
+  const isUrgent    = timeLeft <= 10
 
   return (
     <div
-      className="min-h-screen flex flex-col items-center justify-center gap-5 relative overflow-hidden py-6"
+      className="min-h-screen flex flex-col items-center justify-center gap-4 relative overflow-hidden py-6"
       style={bgStyle}
     >
       {/* Tło sonaru */}
@@ -302,77 +336,86 @@ export default function GameScreen({ gameId, myPlayerId, myShips }: GameScreenPr
         <div className="sonar-ring w-64 h-64" /><div className="sonar-ring w-64 h-64" /><div className="sonar-ring w-64 h-64" />
       </div>
 
-      {/* Toast z komunikatem */}
+      {/* Toast */}
       {toast && (
-        <div
-          className={`fixed top-6 left-1/2 -translate-x-1/2 z-50 px-5 py-2.5 rounded-full text-sm font-semibold shadow-lg transition-all ${
-            toast.type === 'success' ? 'bg-green-500/90 text-white' :
-            toast.type === 'error'   ? 'bg-red-500/90 text-white'   :
-                                       'bg-slate-700/90 text-slate-200'
-          }`}
-        >
+        <div className={`fixed top-6 left-1/2 -translate-x-1/2 z-50 px-5 py-2.5 rounded-full text-sm font-semibold shadow-lg ${
+          toast.type === 'success' ? 'bg-green-500/90 text-white' :
+          toast.type === 'error'   ? 'bg-red-500/90 text-white'   :
+                                     'bg-slate-700/90 text-slate-200'
+        }`}>
           {toast.text}
         </div>
       )}
 
-      {/* Wskaźnik tury */}
-      <div
-        className="relative z-10 px-6 py-2.5 rounded-full flex items-center gap-3 transition-all"
-        style={{ background: 'rgba(6,20,45,0.9)', border: `1px solid ${turnBorderColor}` }}
-      >
-        <span className={`w-2.5 h-2.5 rounded-full ${isMyTurn ? 'bg-cyan-400 animate-pulse' : 'bg-slate-600'}`} />
-        <span className={`text-sm font-semibold ${isMyTurn ? 'text-cyan-300' : 'text-slate-500'}`}>
-          {isMyTurn ? 'Twoja tura — strzelaj!' : 'Tura przeciwnika…'}
-        </span>
+      {/* Wskaźnik tury + timer */}
+      <div className="relative z-10 flex flex-col items-center gap-1.5">
+        <div
+          className="px-6 py-2.5 rounded-full flex items-center gap-3 transition-all"
+          style={{
+            background: 'rgba(6,20,45,0.9)',
+            border: `1px solid ${isMyTurn ? 'rgba(56,189,248,0.5)' : 'rgba(100,116,139,0.3)'}`,
+          }}
+        >
+          <span className={`w-2.5 h-2.5 rounded-full ${isMyTurn ? 'bg-cyan-400 animate-pulse' : 'bg-slate-600'}`} />
+          <span className={`text-sm font-semibold ${isMyTurn ? 'text-cyan-300' : 'text-slate-500'}`}>
+            {isMyTurn ? 'Twoja tura — strzelaj!' : 'Tura przeciwnika…'}
+          </span>
+          {/* Licznik czasu */}
+          <span
+            className={`text-sm font-black font-mono ml-1 ${isUrgent ? 'animate-pulse' : ''}`}
+            style={{ color: timerColor }}
+          >
+            {timeLeft}s
+          </span>
+        </div>
+
+        {/* Pasek postępu timera */}
+        <div className="w-64 h-1 rounded-full bg-slate-800/60 overflow-hidden">
+          <div
+            className="h-full rounded-full transition-all duration-1000"
+            style={{ width: `${timerPct}%`, background: timerColor }}
+          />
+        </div>
       </div>
 
       {/* Dwie plansze */}
       <div className="relative z-10 flex gap-6 items-start">
 
-        {/* Moja plansza */}
+        {/* Moja plansza – tylko podgląd, nie można klikać */}
         <div className="flex flex-col gap-2">
           <p className="text-xs font-semibold text-slate-400 text-center tracking-widest uppercase">
             Twoja plansza
           </p>
-          <div
-            className="p-4 rounded-2xl"
-            style={{
-              background: 'rgba(6,20,45,0.85)',
-              border: '1px solid rgba(56,189,248,0.15)',
-              boxShadow: '0 0 30px rgba(56,189,248,0.05)',
-            }}
-          >
-            <Board
-              cells={myBoard}
-              onCellClick={() => {}}
-            />
+          <div className="p-4 rounded-2xl" style={{
+            background: 'rgba(6,20,45,0.85)',
+            border: '1px solid rgba(56,189,248,0.12)',
+          }}>
+            <Board cells={myBoard} onCellClick={() => {}} interactive={false} />
           </div>
         </div>
 
-        {/* Plansza przeciwnika */}
+        {/* Plansza przeciwnika – klikalna podczas mojej tury */}
         <div className="flex flex-col gap-2">
           <p className="text-xs font-semibold text-slate-400 text-center tracking-widest uppercase">
             Plansza przeciwnika
           </p>
-          <div
-            className="p-4 rounded-2xl transition-all"
-            style={{
-              background: 'rgba(6,20,45,0.85)',
-              border: `1px solid ${isMyTurn ? 'rgba(56,189,248,0.35)' : 'rgba(56,189,248,0.1)'}`,
-              boxShadow: isMyTurn ? '0 0 30px rgba(56,189,248,0.12)' : 'none',
-            }}
-          >
+          <div className="p-4 rounded-2xl transition-all" style={{
+            background: 'rgba(6,20,45,0.85)',
+            border: `1px solid ${isMyTurn ? 'rgba(56,189,248,0.4)' : 'rgba(56,189,248,0.1)'}`,
+            boxShadow: isMyTurn ? '0 0 30px rgba(56,189,248,0.12)' : 'none',
+          }}>
             <Board
               cells={enemyBoard}
               onCellClick={handleShoot}
               isEnemy
+              interactive={isMyTurn}
             />
           </div>
         </div>
 
       </div>
 
-      {/* Fleet tracker – statki przeciwnika */}
+      {/* Fleet tracker */}
       <div className="relative z-10 w-full max-w-2xl px-4">
         <FleetTracker opponentShips={opponentShips} myShots={myShots} />
       </div>
