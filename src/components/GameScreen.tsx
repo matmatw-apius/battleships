@@ -3,6 +3,7 @@ import Board from './Board'
 import type { Cell, CellState } from './Board'
 import { supabase } from '../lib/supabase'
 import type { PlacedShip, ShotRecord, GameRow } from '../types/game'
+import { playShoot, playHit, playMiss, playSunk, playWin, playLose } from '../lib/sounds'
 
 const TURN_SECONDS = 30
 
@@ -211,12 +212,16 @@ export default function GameScreen({ gameId, myPlayerId, myShips, onReturnToLobb
             })
             // Powiadomienie z nazwą statku jeśli zatopiony
             if (shot.result === 'sunk') {
+              playSunk()
               const sunkShip = myShips.find(ship =>
                 ship.cells.some(c => c.row === shot.row && c.col === shot.col)
               )
               showToast(`💥 Twój ${sunkShip?.name ?? 'statek'} został zatopiony!`, 'error')
             } else if (shot.result === 'hit') {
+              playHit()
               showToast('🎯 Przeciwnik trafił twój statek!', 'error')
+            } else {
+              playMiss()
             }
           }
         }
@@ -283,6 +288,8 @@ export default function GameScreen({ gameId, myPlayerId, myShips, onReturnToLobb
     // Zatrzymaj timer natychmiast – strzał już wykonany
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
 
+    playShoot()
+
     // Wyznacz wynik strzału na podstawie ukrytych statków przeciwnika
     const hitShip = opponentShips.find(ship =>
       ship.cells.some(c => c.row === row && c.col === col)
@@ -299,9 +306,13 @@ export default function GameScreen({ gameId, myPlayerId, myShips, onReturnToLobb
 
     // Pokaż feedback od razu (nie czekając na Realtime)
     if (result === 'sunk') {
+      playSunk()
       showToast(`💥 ${hitShip!.name} zatopiony!`, 'success')
     } else if (result === 'hit') {
+      playHit()
       showToast('🎯 Trafiony! Strzelasz ponownie!', 'success')
+    } else {
+      playMiss()
     }
 
     await supabase.from('shots').insert({ game_id: gameId, player_id: myPlayerId, row, col, result })
@@ -349,6 +360,14 @@ export default function GameScreen({ gameId, myPlayerId, myShips, onReturnToLobb
       onRematch(data.id)
     }
   }
+
+  // ─── Dźwięk końca gry ────────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (gameStatus !== 'finished') return
+    if (winnerId === myPlayerId) playWin()
+    else playLose()
+  }, [gameStatus, winnerId, myPlayerId])
 
   // ─── Rendering ────────────────────────────────────────────────────────────
 
