@@ -25,9 +25,28 @@ function computePreviewCells(origin: { row: number; col: number }, size: number,
 }
 
 function isPlacementValid(previewCells: { row: number; col: number }[], board: Cell[][]): boolean {
-  return previewCells.every(
+  // Wszystkie pola muszą być w granicach i puste
+  if (!previewCells.every(
     ({ row, col }) => row >= 0 && row < 10 && col >= 0 && col < 10 && board[row][col].state === 'empty'
-  )
+  )) return false
+
+  // Żadne sąsiednie pole (8 kierunków) nie może zawierać innego statku
+  const previewSet = new Set(previewCells.map(({ row, col }) => `${row}-${col}`))
+  for (const { row, col } of previewCells) {
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        if (dr === 0 && dc === 0) continue
+        const nr = row + dr
+        const nc = col + dc
+        if (nr >= 0 && nr < 10 && nc >= 0 && nc < 10
+          && !previewSet.has(`${nr}-${nc}`)
+          && board[nr][nc].state === 'ship') {
+          return false
+        }
+      }
+    }
+  }
+  return true
 }
 
 // ─── Typy ────────────────────────────────────────────────────────────────────
@@ -119,7 +138,7 @@ export default function App() {
       return 'Statek wykracza poza planszę'
     if (previewCells.some(({ row, col }) => row >= 0 && row < 10 && col >= 0 && col < 10 && cells[row][col].state !== 'empty'))
       return 'Statki nie mogą się nakładać'
-    return 'Nieprawidłowa pozycja'
+    return 'Statki nie mogą się stykać'
   }, [selectedShip, hoverCell, previewValid, previewCells, cells])
 
   useEffect(() => {
