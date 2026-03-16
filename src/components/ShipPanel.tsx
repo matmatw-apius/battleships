@@ -19,16 +19,20 @@ type ShipPanelProps = {
   fleet: ShipType[]
   selectedShipId: string | null
   orientation: 'h' | 'v'
+  placementError: string | null
   onSelectShip: (id: string) => void
   onRotate: () => void
+  onReady: () => void
 }
 
 export default function ShipPanel({
   fleet,
   selectedShipId,
   orientation,
+  placementError,
   onSelectShip,
   onRotate,
+  onReady,
 }: ShipPanelProps) {
   // Sprawdzenie czy wszystkie statki zostały rozmieszczone
   const allPlaced = fleet.every((s) => s.placed >= s.count)
@@ -109,25 +113,45 @@ export default function ShipPanel({
         })}
       </div>
 
+      {/* Komunikat błędu rozmieszczenia */}
+      <div className={`overflow-hidden transition-all duration-200 ${placementError ? 'max-h-16' : 'max-h-0'}`}>
+        <div className="flex items-start gap-2 p-2.5 rounded-xl bg-red-950/60 border border-red-700/40">
+          <span className="text-red-400 text-sm leading-none mt-0.5">⚠</span>
+          <p className="text-red-300 text-xs leading-snug">{placementError}</p>
+        </div>
+      </div>
+
       {/* Separator */}
       <div className="h-px bg-cyan-900/60" />
 
       {/* Przycisk obrotu statku */}
-      <button
-        onClick={onRotate}
-        className="w-full py-2 px-3 rounded-xl text-xs font-semibold text-cyan-300
-          border border-cyan-800/50 hover:border-cyan-500/50 hover:bg-cyan-950/50
-          transition-all duration-150 flex items-center justify-center gap-2"
-      >
-        <span className="text-base leading-none">⟳</span>
-        Obróć — {orientation === 'h' ? 'poziomo →' : 'pionowo ↓'}
-      </button>
+      {!allPlaced && (
+        <button
+          onClick={onRotate}
+          className="w-full py-2 px-3 rounded-xl text-xs font-semibold text-cyan-300
+            border border-cyan-800/50 hover:border-cyan-500/50 hover:bg-cyan-950/50
+            transition-all duration-150 flex items-center justify-center gap-2"
+        >
+          <span className="text-base leading-none">⟳</span>
+          Obróć — {orientation === 'h' ? 'poziomo →' : 'pionowo ↓'}
+        </button>
+      )}
 
-      {/* Komunikat po rozmieszczeniu całej floty */}
+      {/* Przycisk gotowości do walki – pojawia się po rozstawieniu całej floty */}
       {allPlaced && (
-        <div className="text-center text-xs text-green-400 font-semibold animate-pulse">
-          Flota gotowa do walki!
-        </div>
+        <button
+          onClick={onReady}
+          className="w-full py-3 px-3 rounded-xl text-sm font-bold text-white
+            transition-all duration-200 active:scale-95 flex items-center justify-center gap-2"
+          style={{
+            background: 'linear-gradient(135deg, #0e7490 0%, #0369a1 100%)',
+            boxShadow: '0 0 20px rgba(56,189,248,0.35), 0 4px 12px rgba(0,0,0,0.4)',
+            border: '1px solid rgba(56,189,248,0.4)',
+          }}
+        >
+          <span className="text-base">⚔</span>
+          Gotowy do walki!
+        </button>
       )}
     </div>
   )

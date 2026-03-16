@@ -41,12 +41,16 @@ function isPlacementValid(
   )
 }
 
+// Fazy gry
+type GamePhase = 'placement' | 'ready'
+
 export default function App() {
   const [cells, setCells]               = useState<Cell[][]>(createEmptyBoard)
   const [fleet, setFleet]               = useState<ShipType[]>(INITIAL_FLEET)
   const [selectedShipId, setSelectedShipId] = useState<string | null>('carrier')
   const [orientation, setOrientation]   = useState<'h' | 'v'>('h')
   const [hoverCell, setHoverCell]       = useState<{ row: number; col: number } | null>(null)
+  const [gamePhase, setGamePhase]       = useState<GamePhase>('placement')
 
   // Aktualnie wybrany statek (tylko jeśli nie w pełni postawiony)
   const selectedShip = useMemo(
@@ -67,6 +71,25 @@ export default function App() {
     () => previewCells.length > 0 && isPlacementValid(previewCells, cells),
     [previewCells, cells]
   )
+
+  // Powód, dla którego nie można postawić statku w danym miejscu
+  const placementError = useMemo(() => {
+    if (!selectedShip || !hoverCell || previewCells.length === 0 || previewValid) return null
+
+    const outOfBounds = previewCells.some(
+      ({ row, col }) => row < 0 || row >= 10 || col < 0 || col >= 10
+    )
+    if (outOfBounds) return 'Statek wykracza poza planszę'
+
+    const overlaps = previewCells.some(
+      ({ row, col }) =>
+        row >= 0 && row < 10 && col >= 0 && col < 10 &&
+        cells[row][col].state !== 'empty'
+    )
+    if (overlaps) return 'Statki nie mogą się nakładać'
+
+    return 'Nieprawidłowa pozycja'
+  }, [selectedShip, hoverCell, previewValid, previewCells, cells])
 
   // Klawisz R obraca statek
   useEffect(() => {
@@ -166,15 +189,48 @@ export default function App() {
           fleet={fleet}
           selectedShipId={selectedShipId}
           orientation={orientation}
+          placementError={placementError}
           onSelectShip={setSelectedShipId}
           onRotate={() => setOrientation((o) => (o === 'h' ? 'v' : 'h'))}
+          onReady={() => setGamePhase('ready')}
         />
       </div>
 
-      {/* Podpowiedź sterowania */}
-      <p className="relative z-10 text-slate-600 text-xs">
-        Kliknij statek w panelu → ustaw na planszy · klawisz R obraca
-      </p>
+      {/* Podpowiedź sterowania lub ekran oczekiwania */}
+      {gamePhase === 'placement' ? (
+        <p className="relative z-10 text-slate-600 text-xs">
+          Kliknij statek w panelu → ustaw na planszy · klawisz R obraca
+        </p>
+      ) : (
+        <div
+          className="relative z-10 flex flex-col items-center gap-3 px-10 py-6 rounded-2xl"
+          style={{
+            background: 'rgba(6, 20, 45, 0.9)',
+            border: '1px solid rgba(56, 189, 248, 0.3)',
+            boxShadow: '0 0 40px rgba(56,189,248,0.12)',
+          }}
+        >
+          {/* Animowana ikona ładowania */}
+          <div className="flex gap-1.5">
+            {[0, 1, 2].map((i) => (
+              <div
+                key={i}
+                className="w-2.5 h-2.5 rounded-full bg-cyan-400"
+                style={{ animation: `sonar 1.2s ease-in-out ${i * 0.2}s infinite` }}
+              />
+            ))}
+          </div>
+          <p className="text-cyan-300 font-semibold text-sm tracking-wide">
+            Czekam na przeciwnika…
+          </p>
+          <button
+            onClick={() => setGamePhase('placement')}
+            className="text-slate-500 text-xs hover:text-slate-300 transition-colors underline underline-offset-2"
+          >
+            Wróć i zmień ustawienie floty
+          </button>
+        </div>
+      )}
     </div>
   )
 }
