@@ -4,6 +4,7 @@ import ShipPanel from './components/ShipPanel'
 import type { Cell, CellState } from './components/Board'
 import { INITIAL_FLEET } from './components/ShipPanel'
 import type { ShipType } from './components/ShipPanel'
+import { supabase } from './lib/supabase'
 
 // Inicjalizacja pustej planszy 10x10
 function createEmptyBoard(): Cell[][] {
@@ -51,6 +52,18 @@ export default function App() {
   const [orientation, setOrientation]   = useState<'h' | 'v'>('h')
   const [hoverCell, setHoverCell]       = useState<{ row: number; col: number } | null>(null)
   const [gamePhase, setGamePhase]       = useState<GamePhase>('placement')
+  const [gamesCount, setGamesCount]     = useState<number | null>(null)
+
+  // Test połączenia z Supabase – pobierz liczbę rekordów z tabeli games
+  useEffect(() => {
+    supabase
+      .from('games')
+      .select('*', { count: 'exact', head: true })
+      .then(({ count, error }) => {
+        if (error) console.error('Błąd połączenia z Supabase:', error.message)
+        else setGamesCount(count ?? 0)
+      })
+  }, [])
 
   // Aktualnie wybrany statek (tylko jeśli nie w pełni postawiony)
   const selectedShip = useMemo(
@@ -141,6 +154,16 @@ export default function App() {
         background: 'radial-gradient(ellipse at 50% 40%, #0d2244 0%, #060e22 55%, #020810 100%)',
       }}
     >
+      {/* Badge połączenia z Supabase */}
+      <div className="absolute top-4 right-4 z-20 flex items-center gap-2 px-3 py-1.5 rounded-full text-xs"
+        style={{ background: 'rgba(6,20,45,0.85)', border: '1px solid rgba(56,189,248,0.2)' }}
+      >
+        <span className={`w-2 h-2 rounded-full ${gamesCount !== null ? 'bg-green-400' : 'bg-yellow-400 animate-pulse'}`} />
+        <span className="text-slate-400">
+          {gamesCount === null ? 'Łączenie…' : `Supabase OK · ${gamesCount} gier`}
+        </span>
+      </div>
+
       {/* Tło – animowane kółka sonaru */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
         <div className="sonar-ring w-64 h-64" />
