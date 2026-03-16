@@ -253,12 +253,21 @@ export default function App() {
         <span className="text-slate-400">{gamesCount === null ? 'Łączenie…' : `Supabase OK · ${gamesCount} gier`}</span>
       </div>
 
-      {/* Nick gracza */}
+      {/* Nick gracza + przycisk powrotu do lobby */}
       {gameCtx && (
-        <div className="absolute top-4 left-4 z-20 flex items-center gap-2 px-3 py-1.5 rounded-full text-xs"
-          style={{ background: 'rgba(6,20,45,0.85)', border: '1px solid rgba(56,189,248,0.2)' }}>
-          <span className="text-cyan-400">⚓</span>
-          <span className="text-slate-300 font-medium">{gameCtx.username}</span>
+        <div className="absolute top-4 left-4 z-20 flex items-center gap-2">
+          <button
+            onClick={handleReturnToLobby}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs text-slate-500 hover:text-slate-300 transition-colors"
+            style={{ background: 'rgba(6,20,45,0.85)', border: '1px solid rgba(56,189,248,0.15)' }}
+          >
+            ← Lobby
+          </button>
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs"
+            style={{ background: 'rgba(6,20,45,0.85)', border: '1px solid rgba(56,189,248,0.2)' }}>
+            <span className="text-cyan-400">⚓</span>
+            <span className="text-slate-300 font-medium">{gameCtx.username}</span>
+          </div>
         </div>
       )}
 
@@ -322,6 +331,12 @@ export default function App() {
           </div>
           <p className="text-cyan-300 font-semibold text-sm tracking-wide">Czekam aż przeciwnik ustawi flotę…</p>
           <p className="text-slate-600 text-xs">Gra rozpocznie się automatycznie</p>
+          <button
+            onClick={handleReturnToLobby}
+            className="text-slate-600 text-xs hover:text-slate-400 transition-colors mt-1"
+          >
+            ← Wróć do lobby
+          </button>
         </div>
       )}
     </div>
