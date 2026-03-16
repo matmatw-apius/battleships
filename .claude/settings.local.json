@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd:*)",
+      "Bash(git add:*)",
+      "mcp__claude_ai_Vercel__list_deployments"
+    ]
+  }
+}

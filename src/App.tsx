@@ -234,6 +234,7 @@ export default function App() {
       <GameScreen
         gameId={gameCtx.gameId}
         myPlayerId={gameCtx.playerId}
+        myUsername={gameCtx.username}
         myShips={placedShipDetails}
         onReturnToLobby={handleReturnToLobby}
         onRematch={handleRematch}

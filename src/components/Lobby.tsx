@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
+import Leaderboard from './Leaderboard'
 
 // Klucze sessionStorage
 const KEY_USERNAME  = 'bs_username'
@@ -42,11 +43,21 @@ export default function Lobby({ onGameReady }: LobbyProps) {
     sessionStorage.setItem(KEY_USERNAME, val)
   }
 
+  // Upsert gracza do tabeli players (aktualizuje username przy każdym wejściu do lobby)
+  async function upsertPlayer() {
+    await supabase.from('players').upsert(
+      { player_id: playerId, username: username.trim() },
+      { onConflict: 'player_id', ignoreDuplicates: false }
+    )
+  }
+
   // Tworzenie nowej gry w Supabase
   async function handleCreateGame() {
     if (!username.trim()) { setError('Wpisz pseudonim przed utworzeniem gry'); return }
     setError(null)
     setLoading(true)
+
+    await upsertPlayer()
 
     const { data, error: err } = await supabase
       .from('games')
@@ -69,6 +80,8 @@ export default function Lobby({ onGameReady }: LobbyProps) {
     if (joinCode.trim().length < 6) { setError('Wpisz kod pokoju (6 znaków)'); return }
     setError(null)
     setLoading(true)
+
+    await upsertPlayer()
 
     // Szukamy gry po kolumnie room_code (dokładne dopasowanie, case-insensitive)
     const { data: found, error: findErr } = await supabase
@@ -305,6 +318,11 @@ export default function Lobby({ onGameReady }: LobbyProps) {
             </button>
           </>
         )}
+      </div>
+
+      {/* Tablica wyników */}
+      <div className="relative z-10 w-full max-w-sm">
+        <Leaderboard />
       </div>
 
       {/* Stopka */}

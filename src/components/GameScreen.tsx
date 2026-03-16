@@ -4,12 +4,14 @@ import type { Cell, CellState } from './Board'
 import { supabase } from '../lib/supabase'
 import type { PlacedShip, ShotRecord, GameRow } from '../types/game'
 import { playShoot, playHit, playMiss, playSunk, playWin, playLose } from '../lib/sounds'
+import ChatPanel from './ChatPanel'
 
 const TURN_SECONDS = 30
 
 type GameScreenProps = {
   gameId: string
   myPlayerId: string
+  myUsername: string
   myShips: PlacedShip[]
   onReturnToLobby: () => void
   onRematch: (newGameId: string) => void
@@ -88,7 +90,7 @@ function FleetTracker({ opponentShips, myShots }: { opponentShips: PlacedShip[],
 
 type Toast = { text: string; type: 'info' | 'success' | 'error' }
 
-export default function GameScreen({ gameId, myPlayerId, myShips, onReturnToLobby, onRematch }: GameScreenProps) {
+export default function GameScreen({ gameId, myPlayerId, myUsername, myShips, onReturnToLobby, onRematch }: GameScreenProps) {
   const [myBoard, setMyBoard]             = useState<Cell[][]>(() => buildMyBoard(myShips, []))
   const [enemyBoard, setEnemyBoard]       = useState<Cell[][]>(createEmptyBoard)
   const [opponentShips, setOpponentShips] = useState<PlacedShip[]>([])
@@ -361,13 +363,17 @@ export default function GameScreen({ gameId, myPlayerId, myShips, onReturnToLobb
     }
   }
 
-  // ─── Dźwięk końca gry ────────────────────────────────────────────────────
+  // ─── Dźwięk + aktualizacja statystyk gracza po zakończeniu gry ──────────
 
   useEffect(() => {
-    if (gameStatus !== 'finished') return
-    if (winnerId === myPlayerId) playWin()
-    else playLose()
-  }, [gameStatus, winnerId, myPlayerId])
+    if (gameStatus !== 'finished' || !opponentId) return
+    const won = winnerId === myPlayerId
+    won ? playWin() : playLose()
+
+    // Inkrementuj wins/losses w tabeli players dla obu graczy
+    supabase.rpc('increment_player_stat', { pid: myPlayerId, col: won ? 'wins' : 'losses' })
+    supabase.from('players').update({ last_played: new Date().toISOString() }).eq('player_id', myPlayerId)
+  }, [gameStatus, winnerId, myPlayerId, opponentId])
 
   // ─── Rendering ────────────────────────────────────────────────────────────
 
@@ -553,6 +559,9 @@ export default function GameScreen({ gameId, myPlayerId, myShips, onReturnToLobb
       <div className="relative z-10 w-full max-w-2xl px-4">
         <FleetTracker opponentShips={opponentShips} myShots={myShots} />
       </div>
+
+      {/* Czat – pływający widget w prawym dolnym rogu */}
+      <ChatPanel gameId={gameId} myPlayerId={myPlayerId} myUsername={myUsername} />
     </div>
   )
 }

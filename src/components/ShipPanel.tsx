@@ -81,19 +81,28 @@ export default function ShipPanel({
                 border: '1px solid rgba(255,255,255,0.06)',
               }}
             >
-              {/* Wizualne bloki reprezentujące rozmiar statku */}
-              <div className="flex gap-0.5">
-                {Array.from({ length: ship.size }, (_, i) => (
+              {/* Graficzna sylwetka statku */}
+              <div className="flex items-center gap-1">
+                {/* Dziób */}
+                <div className={`w-3 h-5 rounded-l-full rounded-r-sm transition-colors ${
+                  isSelected ? 'bg-cyan-400' : isFullyPlaced ? 'bg-green-500/70' : 'bg-slate-400'
+                }`} style={{ clipPath: 'polygon(0 30%, 100% 0, 100% 100%, 0 70%)' }} />
+                {/* Kadłub */}
+                {Array.from({ length: ship.size - 1 }, (_, i) => (
                   <div
                     key={i}
-                    className={`h-4 flex-1 rounded-sm transition-colors ${
-                      isSelected
-                        ? 'bg-cyan-400'
-                        : isFullyPlaced
-                        ? 'bg-green-500/60'
-                        : 'bg-gray-400'
+                    className={`h-5 flex-1 transition-colors relative ${
+                      isSelected ? 'bg-cyan-500' : isFullyPlaced ? 'bg-green-500/60' : 'bg-slate-500'
                     }`}
-                  />
+                    style={{ borderRadius: i === ship.size - 2 ? '0 3px 3px 0' : '0' }}
+                  >
+                    {/* Iluminator */}
+                    {i === Math.floor((ship.size - 2) / 2) && (
+                      <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full ${
+                        isSelected ? 'bg-cyan-200/60' : isFullyPlaced ? 'bg-green-200/50' : 'bg-slate-300/40'
+                      }`} />
+                    )}
+                  </div>
                 ))}
               </div>
 
