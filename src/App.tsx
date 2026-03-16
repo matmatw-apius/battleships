@@ -72,6 +72,30 @@ export default function App() {
     setGamePhase('placement')
   }, [])
 
+  // Powrót do lobby – reset całego stanu gry
+  const handleReturnToLobby = useCallback(() => {
+    setGamePhase('lobby')
+    setGameCtx(null)
+    setCells(createEmptyBoard())
+    setFleet(INITIAL_FLEET)
+    setPlacedShipDetails([])
+    setSelectedShipId('carrier')
+    setOrientation('h')
+    setHoverCell(null)
+  }, [])
+
+  // Regrywka z tym samym przeciwnikiem – reset planszy, nowe gameId, wróć do placement
+  const handleRematch = useCallback((newGameId: string) => {
+    setGameCtx(prev => prev ? { ...prev, gameId: newGameId } : null)
+    setCells(createEmptyBoard())
+    setFleet(INITIAL_FLEET)
+    setPlacedShipDetails([])
+    setSelectedShipId('carrier')
+    setOrientation('h')
+    setHoverCell(null)
+    setGamePhase('placement')
+  }, [])
+
   // ─── Logika ustawiania statków ───────────────────────────────────────────
 
   const selectedShip = useMemo(
@@ -192,6 +216,8 @@ export default function App() {
         gameId={gameCtx.gameId}
         myPlayerId={gameCtx.playerId}
         myShips={placedShipDetails}
+        onReturnToLobby={handleReturnToLobby}
+        onRematch={handleRematch}
       />
     )
   }

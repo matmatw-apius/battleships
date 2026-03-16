@@ -10,6 +10,8 @@ type GameScreenProps = {
   gameId: string
   myPlayerId: string
   myShips: PlacedShip[]
+  onReturnToLobby: () => void
+  onRematch: (newGameId: string) => void
 }
 
 // ─── Pomocnicze funkcje budowania planszy ───────────────────────────────────
@@ -85,7 +87,7 @@ function FleetTracker({ opponentShips, myShots }: { opponentShips: PlacedShip[],
 
 type Toast = { text: string; type: 'info' | 'success' | 'error' }
 
-export default function GameScreen({ gameId, myPlayerId, myShips }: GameScreenProps) {
+export default function GameScreen({ gameId, myPlayerId, myShips, onReturnToLobby, onRematch }: GameScreenProps) {
   const [myBoard, setMyBoard]             = useState<Cell[][]>(() => buildMyBoard(myShips, []))
   const [enemyBoard, setEnemyBoard]       = useState<Cell[][]>(createEmptyBoard)
   const [opponentShips, setOpponentShips] = useState<PlacedShip[]>([])
@@ -97,9 +99,17 @@ export default function GameScreen({ gameId, myPlayerId, myShips }: GameScreenPr
   const [toast, setToast]                 = useState<Toast | null>(null)
   const [loading, setLoading]             = useState(true)
   const [timeLeft, setTimeLeft]           = useState(TURN_SECONDS)
+  // timerVersion – zmiana wartości wymusza reset timera (np. po trafieniu bez zmiany tury)
+  const [timerVersion, setTimerVersion]   = useState(0)
+  // Stan przycisku regrywki
+  const [rematchState, setRematchState]   = useState<'idle' | 'waiting'>('idle')
 
   // Ref do interwału timera – pozwala anulować go przed strzałem
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Ref do kanału Realtime używanego do sygnalizacji regrywki
+  const rematchChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
+  // Guard przed podwójnym tworzeniem regrywki
+  const rematchCreatedRef = useRef(false)
 
   const isMyTurn = currentTurn === myPlayerId
   const myShots  = allShots.filter(s => s.player_id === myPlayerId)
@@ -143,7 +153,8 @@ export default function GameScreen({ gameId, myPlayerId, myShips }: GameScreenPr
     init()
   }, [gameId, myPlayerId, myShips])
 
-  // ─── Timer tury – 30 sekund, reset przy każdej zmianie tury ─────────────
+  // ─── Timer tury – resetuje się przy każdej zmianie tury LUB po strzale ────
+  // timerVersion zmienia się po każdym strzale (hit/miss), currentTurn – po missie/auto-pass
 
   useEffect(() => {
     if (gameStatus !== 'battle' || !opponentId) return
@@ -166,7 +177,8 @@ export default function GameScreen({ gameId, myPlayerId, myShips }: GameScreenPr
     }, 1000)
 
     return () => { if (timerRef.current) clearInterval(timerRef.current) }
-  }, [currentTurn, gameStatus, opponentId, gameId, myPlayerId])
+    // timerVersion w deps = efekt restartuje timer po każdym strzale
+  }, [currentTurn, gameStatus, opponentId, gameId, myPlayerId, timerVersion])
 
   // ─── Realtime: nowe strzały ───────────────────────────────────────────────
 
@@ -231,6 +243,30 @@ export default function GameScreen({ gameId, myPlayerId, myShips }: GameScreenPr
     return () => { supabase.removeChannel(channel) }
   }, [gameId])
 
+  // ─── Realtime: oczekiwanie na zaproszenie do regrywki ────────────────────
+  // Subskrybujemy INSERT na games gdzie player2_id = my ID (opponent stworzył rematch)
+
+  useEffect(() => {
+    if (gameStatus !== 'finished' || !opponentId) return
+
+    // Wspólny deterministyczny kanał broadcast dla obu graczy
+    const channelName = `rematch:${[myPlayerId, opponentId].sort().join(':')}`
+    const channel = supabase.channel(channelName)
+    rematchChannelRef.current = channel
+
+    channel
+      .on('broadcast', { event: 'rematch' }, ({ payload }: { payload: { gameId: string } }) => {
+        // Guard – ignorujemy jeśli sami już stworzyliśmy regrywkę
+        if (!rematchCreatedRef.current) {
+          rematchCreatedRef.current = true
+          onRematch(payload.gameId)
+        }
+      })
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [gameStatus, opponentId, myPlayerId, onRematch])
+
   // ─── Logika strzału ───────────────────────────────────────────────────────
 
   const handleShoot = useCallback(async (row: number, col: number) => {
@@ -242,7 +278,7 @@ export default function GameScreen({ gameId, myPlayerId, myShips }: GameScreenPr
     )
     if (alreadyShot) { showToast('To pole było już strzelane', 'info'); return }
 
-    // Anuluj timer – strzał wykonany, nie ma potrzeby auto-przekazywać tury
+    // Zatrzymaj timer natychmiast – strzał już wykonany
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
 
     // Wyznacz wynik strzału na podstawie ukrytych statków przeciwnika
@@ -268,6 +304,9 @@ export default function GameScreen({ gameId, myPlayerId, myShips }: GameScreenPr
 
     await supabase.from('shots').insert({ game_id: gameId, player_id: myPlayerId, row, col, result })
 
+    // Zresetuj timer po każdym strzale (hit lub miss)
+    setTimerVersion(v => v + 1)
+
     if (result === 'miss') {
       await supabase.from('games').update({ current_turn: opponentId }).eq('id', gameId)
     } else if (result === 'sunk') {
@@ -285,6 +324,30 @@ export default function GameScreen({ gameId, myPlayerId, myShips }: GameScreenPr
     }
   }, [gameId, myPlayerId, opponentId, isMyTurn, gameStatus, allShots, opponentShips])
 
+  // ─── Regrywka: tworzenie nowej gry z tym samym przeciwnikiem ─────────────
+
+  async function handleCreateRematch() {
+    if (rematchCreatedRef.current) return
+    rematchCreatedRef.current = true
+    setRematchState('waiting')
+
+    const { data } = await supabase
+      .from('games')
+      .insert({ player1_id: myPlayerId, player2_id: opponentId, status: 'placement' })
+      .select()
+      .single()
+
+    if (data && rematchChannelRef.current) {
+      // Wyślij broadcast do przeciwnika z ID nowej gry
+      await rematchChannelRef.current.send({
+        type: 'broadcast',
+        event: 'rematch',
+        payload: { gameId: data.id },
+      })
+      onRematch(data.id)
+    }
+  }
+
   // ─── Rendering ────────────────────────────────────────────────────────────
 
   const bgStyle = { background: 'radial-gradient(ellipse at 50% 40%, #0d2244 0%, #060e22 55%, #020810 100%)' }
@@ -297,7 +360,8 @@ export default function GameScreen({ gameId, myPlayerId, myShips }: GameScreenPr
     )
   }
 
-  // Ekran końca gry
+  // ─── Ekran końca gry ──────────────────────────────────────────────────────
+
   if (gameStatus === 'finished') {
     const won = winnerId === myPlayerId
     return (
@@ -306,16 +370,55 @@ export default function GameScreen({ gameId, myPlayerId, myShips }: GameScreenPr
           <div className="sonar-ring w-64 h-64" /><div className="sonar-ring w-64 h-64" /><div className="sonar-ring w-64 h-64" />
         </div>
         <div
-          className="relative z-10 flex flex-col items-center gap-4 px-16 py-10 rounded-2xl text-center"
-          style={{ background: 'rgba(6,20,45,0.95)', border: `1px solid ${won ? 'rgba(74,222,128,0.4)' : 'rgba(239,68,68,0.4)'}` }}
+          className="relative z-10 flex flex-col items-center gap-5 px-16 py-10 rounded-2xl text-center"
+          style={{
+            background: 'rgba(6,20,45,0.95)',
+            border: `1px solid ${won ? 'rgba(74,222,128,0.4)' : 'rgba(239,68,68,0.4)'}`,
+            boxShadow: `0 0 60px ${won ? 'rgba(74,222,128,0.1)' : 'rgba(239,68,68,0.1)'}`,
+          }}
         >
           <p className="text-6xl">{won ? '🏆' : '💀'}</p>
-          <h2 className={`text-3xl font-black ${won ? 'text-green-400' : 'text-red-400'}`}>
-            {won ? 'Wygrałeś!' : 'Przegrałeś!'}
-          </h2>
-          <p className="text-slate-400 text-sm">
-            {won ? 'Zatopiłeś całą flotę przeciwnika' : 'Twoja flota została zatopiona'}
-          </p>
+          <div className="flex flex-col gap-1">
+            <h2 className={`text-3xl font-black ${won ? 'text-green-400' : 'text-red-400'}`}>
+              {won ? 'Wygrałeś!' : 'Przegrałeś!'}
+            </h2>
+            <p className="text-slate-400 text-sm">
+              {won ? 'Zatopiłeś całą flotę przeciwnika' : 'Twoja flota została zatopiona'}
+            </p>
+          </div>
+
+          {/* Przyciski akcji */}
+          <div className="flex flex-col gap-3 w-full mt-2">
+            {rematchState === 'waiting' ? (
+              <div className="flex items-center justify-center gap-2 py-3">
+                {[0, 1, 2].map(i => (
+                  <div key={i} className="w-2 h-2 rounded-full bg-cyan-400"
+                    style={{ animation: `sonar 1.2s ease-in-out ${i * 0.2}s infinite` }} />
+                ))}
+                <span className="text-cyan-300 text-sm ml-1">Oczekuję na przeciwnika…</span>
+              </div>
+            ) : (
+              <button
+                onClick={handleCreateRematch}
+                className="w-full py-3 rounded-xl text-sm font-bold text-white transition-all duration-200 active:scale-95"
+                style={{
+                  background: 'linear-gradient(135deg, #0e7490 0%, #0369a1 100%)',
+                  boxShadow: '0 0 20px rgba(56,189,248,0.25), 0 4px 12px rgba(0,0,0,0.4)',
+                  border: '1px solid rgba(56,189,248,0.4)',
+                }}
+              >
+                🔄 Zagraj ponownie
+              </button>
+            )}
+
+            <button
+              onClick={onReturnToLobby}
+              className="w-full py-2.5 rounded-xl text-sm font-semibold text-slate-400
+                hover:text-slate-200 transition-colors border border-slate-700/50 hover:border-slate-500/50"
+            >
+              ← Wróć do lobby
+            </button>
+          </div>
         </div>
       </div>
     )
@@ -346,6 +449,16 @@ export default function GameScreen({ gameId, myPlayerId, myShips }: GameScreenPr
           {toast.text}
         </div>
       )}
+
+      {/* Przycisk powrotu do lobby */}
+      <button
+        onClick={onReturnToLobby}
+        className="absolute top-4 left-4 z-20 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs
+          text-slate-500 hover:text-slate-300 transition-colors"
+        style={{ background: 'rgba(6,20,45,0.85)', border: '1px solid rgba(56,189,248,0.15)' }}
+      >
+        ← Lobby
+      </button>
 
       {/* Wskaźnik tury + timer */}
       <div className="relative z-10 flex flex-col items-center gap-1.5">
